@@ -3,9 +3,19 @@ import java.nio.file.*;
 import java.io.*;
 
 public class Lexico {
+
+    // Listener inline para errores léxicos claros (sin archivo extra)
+    private static final BaseErrorListener PRETTY = new BaseErrorListener() {
+        @Override
+        public void syntaxError(Recognizer<?,?> recognizer, Object offendingSymbol,
+                                int line, int charPositionInLine, String msg, RecognitionException e) {
+            System.err.printf("[Léxico] línea %d:%d %s%n", line, charPositionInLine, msg);
+        }
+    };
+
     public static void main(String[] args) throws Exception {
         if (args.length == 0) {
-            System.err.println("Uso: java -cp \"tools\\antlr-4.13.2-complete.jar;gen\" Lexico <archivo.remi>");
+            System.err.println("Uso: java -cp \"tools\\antlr-4.13.2-complete.jar;gen;out\" Lexico <archivo.remi>");
             System.exit(1);
         }
 
@@ -15,6 +25,10 @@ public class Lexico {
         CharStream cs = CharStreams.fromString(source);
         JuanLexer lexer = new JuanLexer(cs);
         Vocabulary vocab = lexer.getVocabulary();
+
+        // Activa mensajes claros de error léxico
+        lexer.removeErrorListeners();
+        lexer.addErrorListener(PRETTY);
 
         int i = 0;
         while (true) {
@@ -27,7 +41,6 @@ public class Lexico {
             if (name == null) name = vocab.getDisplayName(t.getType());
             name = mostrarNombre(name);
 
-            // línea/columna son base-1 en línea y base-0 en columna en ANTLR; mostramos ambos +1 por claridad
             int line = t.getLine();
             int col = t.getCharPositionInLine() + 1;
 
@@ -36,23 +49,22 @@ public class Lexico {
             i++;
         }
 
-        // Nota: WS y COMMENT no aparecen porque tu gramática los ignora con `-> skip`.
+        // Nota: WS y COMMENT no aparecen porque la gramática los salta con `-> skip`.
     }
 
     private static String mostrarNombre(String name) {
-          if (name == null) return null;
-          switch (name) {
-               case "SI":       return "CONDICIONAL_SI";
-               case "SINO":     return "CONDICIONAL_NO";
-               case "ENTERO":
-               case "CADENA":   return "TIPO_VARIABLE";
-               default:         return name;
-          }
-     }
+        if (name == null) return null;
+        switch (name) {
+            case "SI":       return "CONDICIONAL_SI";
+            case "SINO":     return "CONDICIONAL_NO";
+            case "ENTERO":
+            case "CADENA":   return "TIPO_VARIABLE";
+            default:         return name;
+        }
+    }
 
     private static String quoteLexeme(String s) {
         if (s == null) return "<null>";
-        // mostrar controladamente (escapar saltos de línea y comillas)
         return "\"" + s.replace("\\", "\\\\")
                        .replace("\"", "\\\"")
                        .replace("\r", "\\r")

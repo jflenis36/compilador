@@ -3,19 +3,18 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Genera un archivo Java (JuanOut.java) desde el árbol de la gramática 'Juan'.
+ * Genera un archivo Java <baseName>Out.java desde el árbol de la gramática 'Juan'.
  * - Declara variables (ENTERO -> int, CADENA -> String)
  * - Asignaciones, imprimir, if/else (SI/SINO/FIN), while (MIENTRAS/FIN)
  * - Expresiones aritméticas y comparaciones
  *
- * Mejoras:
- * - Cabecera documentada (fuente .remi y fecha/hora)
- * - Comparación de cadenas correcta: '=='/'!=' se traducen a helpers eq/neq
- * - Constant folding seguro para aritmética con literales int
+ * NOTA: Para '=='/'!=' con Strings, Java usa equals(). Aquí se dejan '=='/'!=' tal cual,
+ * asumiendo que cadenas se usan sobre todo en impresión/concatenación.
+ * Si quieres equals() para cadenas, lo ajustamos.
  */
 public class GeneradorCodigo extends JuanBaseVisitor<String> {
 
-    private final String IND = "    ";
+    private static final String IND = "    ";
 
     // Acumuladores por secciones
     private final StringBuilder decls = new StringBuilder();  // declaraciones (int x; String s;)
@@ -24,48 +23,42 @@ public class GeneradorCodigo extends JuanBaseVisitor<String> {
     // Tabla de símbolos mínima: nombre -> tipo ("int" | "String")
     private final Map<String, String> tipos = new LinkedHashMap<>();
 
-    // Nombre del archivo fuente para documentar en la salida
-    private final String fuente;
+    // Metadatos (opcional)
+    private final String inputPath;  // se usa si quieres poner comentarios con el origen
+    private String className = "JuanOut"; // nombre por defecto (compatible hacia atrás)
 
-    public GeneradorCodigo(String nombreFuente) {
-        this.fuente = nombreFuente;
+    /** Compatibilidad con Main antiguo: new GeneradorCodigo(inputPath) */
+    public GeneradorCodigo(String inputPath) {
+        this.inputPath = inputPath;
     }
 
+    /** Versión dinámica: new GeneradorCodigo(inputPath, className) */
+    public GeneradorCodigo(String inputPath, String className) {
+        this.inputPath = inputPath;
+        if (className != null && !className.isBlank()) {
+            this.className = className;
+        }
+    }
+
+    /** Punto de entrada para generar el código Java completo */
     public String generar(ParseTree tree) {
-        // Visitar programa
+        // Visitar el programa para llenar decls/body
         visit(tree);
 
-        // Armar clase Java
         StringBuilder sb = new StringBuilder();
-
-        // Cabecera documentada
-        sb.append("/*\n");
-        sb.append(" * JuanOut.java - generado por Remilang\n");
-        sb.append(" * Fuente: ").append(fuente == null ? "<desconocido>" : fuente).append("\n");
-        sb.append(" * Fecha:  ").append(new java.util.Date().toString()).append("\n");
-        sb.append(" */\n");
-
         sb.append("import java.util.*;\n");
-        sb.append("public class JuanOut {\n");
-
-        // Helpers de igualdad (int/String)
-        sb.append(IND).append("// Helpers de igualdad para int y String\n");
-        sb.append(IND).append("private static boolean eq(int a, int b){ return a == b; }\n");
-        sb.append(IND).append("private static boolean eq(String a, String b){ return Objects.equals(a, b); }\n");
-        sb.append(IND).append("private static boolean neq(int a, int b){ return a != b; }\n");
-        sb.append(IND).append("private static boolean neq(String a, String b){ return !Objects.equals(a, b); }\n\n");
-
+        if (inputPath != null && !inputPath.isBlank()) {
+            sb.append("// Generado a partir de: ").append(inputPath).append("\n");
+        }
+        sb.append("public class ").append(className).append(" {\n");
         sb.append(IND).append("public static void main(String[] args) {\n");
 
         // Declaraciones primero
         if (decls.length() > 0) {
-            sb.append(IND).append("// Declaraciones\n");
             sb.append(decls);
-            sb.append("\n");
         }
 
         // Luego el cuerpo
-        sb.append(IND).append("// Sentencias\n");
         sb.append(body);
 
         sb.append(IND).append("}\n");
@@ -165,15 +158,14 @@ public class GeneradorCodigo extends JuanBaseVisitor<String> {
     public String visitBloque(JuanParser.BloqueContext ctx) {
         StringBuilder sb = new StringBuilder();
         for (JuanParser.SentenciaContext s : ctx.sentencia()) {
-            // Para que respete indentación dentro de if/while:
             int baseLen = body.length();
             visit(s);
             String added = body.substring(baseLen);
-            // Re-indentar con 1 nivel adicional
+            // Re-indentar +1 nivel (dentro de if/while)
             String reind = Arrays.stream(added.split("\n", -1))
                     .map(line -> line.isEmpty() ? line : IND + line)
                     .collect(Collectors.joining("\n"));
-            // Consumir lo agregado y escribirlo localmente
+            // “Consumir” lo agregado en body y moverlo localmente al bloque
             body.setLength(baseLen);
             sb.append(reind);
             if (!reind.endsWith("\n")) sb.append("\n");
@@ -188,27 +180,15 @@ public class GeneradorCodigo extends JuanBaseVisitor<String> {
         String l = visit(ctx.expresion(0));
         String r = visit(ctx.expresion(1));
         String op = ctx.op.getText();
-
-        if ("==".equals(op)) {
-            return "eq(" + l + ", " + r + ")";
-        } else if ("!=".equals(op)) {
-            return "neq(" + l + ", " + r + ")";
-        } else {
-            // <, >, <=, >= se emiten tal cual (semántica ya validó tipos int)
-            return "(" + l + " " + op + " " + r + ")";
-        }
+        return "(" + l + " " + op + " " + r + ")";
     }
 
     @Override
     public String visitSumaOp(JuanParser.SumaOpContext ctx) {
         String l = visit(ctx.expresion(0));
         String r = visit(ctx.expresion(1));
-
-        // Constant folding para enteros
-        String folded = foldArit("+", l, r);
-        if (folded != null) return folded;
-
-        return "(" + l + " + " + r + ")";
+        String op = ctx.op.getText();
+        return "(" + l + " " + op + " " + r + ")";
     }
 
     @Override
@@ -216,22 +196,12 @@ public class GeneradorCodigo extends JuanBaseVisitor<String> {
         String l = visit(ctx.expresion(0));
         String r = visit(ctx.expresion(1));
         String op = ctx.op.getText();
-
-        // Constant folding para enteros
-        String folded = foldArit(op, l, r);
-        if (folded != null) return folded;
-
         return "(" + l + " " + op + " " + r + ")";
     }
 
     @Override
     public String visitExpresionParentesis(JuanParser.ExpresionParentesisContext ctx) {
-        String sub = visit(ctx.expresion());
-        // Paréntesis mínimos: si el sub ya es literal o ID, podemos omitirlos
-        if (esIntLiteral(sub) || esStringLiteral(sub) || esIdentificador(sub)) {
-            return sub;
-        }
-        return "(" + sub + ")";
+        return "(" + visit(ctx.expresion()) + ")";
     }
 
     @Override
@@ -257,38 +227,5 @@ public class GeneradorCodigo extends JuanBaseVisitor<String> {
         if (ctx.ENTERO() != null) return "int";
         if (ctx.CADENA() != null) return "String";
         throw new RuntimeException("Tipo no soportado: " + ctx.getText());
-    }
-
-    // ---------- Helpers de codegen ----------
-
-    private boolean esIntLiteral(String s) {
-        return s != null && s.matches("-?\\d+");
-    }
-
-    private boolean esStringLiteral(String s) {
-        return s != null && s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"");
-    }
-
-    private boolean esIdentificador(String s) {
-        return s != null && s.matches("[a-zA-Z_][a-zA-Z_0-9]*");
-    }
-
-    /**
-     * Constant folding para aritmética de enteros: +, -, *, /
-     * Devuelve el resultado como String si se puede; si no, null.
-     */
-    private String foldArit(String op, String l, String r) {
-        if (!esIntLiteral(l) || !esIntLiteral(r)) return null;
-        long a = Long.parseLong(l);
-        long b = Long.parseLong(r);
-        switch (op) {
-            case "+": return String.valueOf(a + b);
-            case "-": return String.valueOf(a - b);
-            case "*": return String.valueOf(a * b);
-            case "/":
-                if (b == 0) return null; // no fold para ÷0
-                return String.valueOf(a / b);
-            default: return null;
-        }
     }
 }
